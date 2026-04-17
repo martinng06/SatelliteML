@@ -2,7 +2,7 @@
 
 A PyTorch surrogate model that predicts the steady-state temperature of all **264 nodes** of a spacecraft thermal model from just **7 device power inputs** — trained on a blend of supervised SINDA simulation data and physics-informed heat-balance residuals, inspired by Tanaka & Nagai (2023).
 
-**Martin Nguyen** — Aerospace Engineering, Physics minor — San José State University (Class of 2028)
+**Martin Nguyen test** — Aerospace Engineering, Physics minor — San José State University (Class of 2028)
 [GitHub](https://github.com/martinng06/SatelliteML) · [LinkedIn](https://www.linkedin.com/in/martinnguyen0/) · marngu06@gmail.com
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
@@ -21,7 +21,7 @@ A PyTorch surrogate model that predicts the steady-state temperature of all **26
   <img src="figures/median_run_detailed.png" width="780" alt="Predicted vs. SINDA temperatures across all 264 nodes for the median-difficulty held-out test run, with per-node error residuals in the lower panel.">
 </p>
 
-*A representative median-difficulty test case from the 500-run held-out set. Top: predicted (dashed) vs. SINDA ground truth (solid) for all 264 nodes. Bottom: per-node error, bounded within ±2 K for the majority of nodes.*
+_A representative median-difficulty test case from the 500-run held-out set. Top: predicted (dashed) vs. SINDA ground truth (solid) for all 264 nodes. Bottom: per-node error, bounded within ±2 K for the majority of nodes._
 
 ---
 
@@ -31,7 +31,7 @@ Spacecraft thermal analysis is slow. A single steady-state run in Thermal Deskto
 
 This project builds a **Physics-Informed Neural Network (PINN) surrogate** that collapses that cost to milliseconds. The pipeline ingests 250 steady-state SINDA runs, compresses the 264-node temperature response into 40 POD (proper orthogonal decomposition) modes via SVD, and trains a small MLP to predict the POD coefficients from device-level power inputs. A physics loss — the residual of the steady-state heat-balance equation on the reconstructed temperature field — is blended with the supervised data loss so the network learns solutions that respect conduction and radiation, not just the training distribution.
 
-The approach follows Tanaka & Nagai's POD-PIML methodology (*International Journal of Heat and Mass Transfer* 213, 2023), extended here with a **hybrid supervised + physics loss** and a **device-level input interface** that maps directly onto operational parameters engineers actually vary.
+The approach follows Tanaka & Nagai's POD-PIML methodology (_International Journal of Heat and Mass Transfer_ 213, 2023), extended here with a **hybrid supervised + physics loss** and a **device-level input interface** that maps directly onto operational parameters engineers actually vary.
 
 ---
 
@@ -51,30 +51,30 @@ The approach follows Tanaka & Nagai's POD-PIML methodology (*International Journ
 
 Held-out test set: **500 steady-state runs × 264 nodes = 132 000 predictions**.
 
-| Metric | Value |
-|---|---|
-| Mean Absolute Error | **1.11 K** |
-| Median Absolute Error | 0.67 K |
-| RMSE | 2.24 K |
-| Max Absolute Error | 65.19 K |
-| Mean Bias | −0.17 K |
-| R² | 0.9299 |
-| MAPE | 0.36% |
+| Metric                | Value      |
+| --------------------- | ---------- |
+| Mean Absolute Error   | **1.11 K** |
+| Median Absolute Error | 0.67 K     |
+| RMSE                  | 2.24 K     |
+| Max Absolute Error    | 65.19 K    |
+| Mean Bias             | −0.17 K    |
+| R²                    | 0.9299     |
+| MAPE                  | 0.36%      |
 
 Per-run accuracy (mean absolute error aggregated over all 264 nodes):
 
-| Run class | MAE |
-|---|---|
-| Best test run (`run_224`) | 0.05 K |
-| Median test run (`run_192`) | 0.72 K |
-| Worst test run (`run_91`) | 13.35 K |
+| Run class                   | MAE     |
+| --------------------------- | ------- |
+| Best test run (`run_224`)   | 0.05 K  |
+| Median test run (`run_192`) | 0.72 K  |
+| Worst test run (`run_91`)   | 13.35 K |
 
 Physics consistency on the test set:
 
-| | Mean \|residual\| | Max \|residual\| |
-|---|---|---|
-| SINDA ground truth | 0.199 W | 33.58 W |
-| **PINN prediction** | **0.200 W** | **32.86 W** |
+|                     | Mean \|residual\| | Max \|residual\| |
+| ------------------- | ----------------- | ---------------- |
+| SINDA ground truth  | 0.199 W           | 33.58 W          |
+| **PINN prediction** | **0.200 W**       | **32.86 W**      |
 
 Non-negativity: **0 / 132 000** predictions below 0 K (min predicted T = 225 K).
 
@@ -132,7 +132,7 @@ Full technical writeup: **[methodology/README.md](methodology/README.md)**.
 
 ## Inspiration
 
-> Tanaka, H. & Nagai, H. (2023). *Thermal surrogate model for spacecraft systems using physics-informed machine learning with POD data reduction.* **International Journal of Heat and Mass Transfer**, 213, 124336. [DOI: 10.1016/j.ijheatmasstransfer.2023.124336](https://doi.org/10.1016/j.ijheatmasstransfer.2023.124336)
+> Tanaka, H. & Nagai, H. (2023). _Thermal surrogate model for spacecraft systems using physics-informed machine learning with POD data reduction._ **International Journal of Heat and Mass Transfer**, 213, 124336. [DOI: 10.1016/j.ijheatmasstransfer.2023.124336](https://doi.org/10.1016/j.ijheatmasstransfer.2023.124336)
 
 Their POD-PIML formulation — predicting POD mode coefficients with a physics-informed loss — is the methodological foundation. This project extends it with (i) a blended supervised + physics loss and (ii) a device-level input interface designed for real operational use. See the [methodology README](methodology/README.md) for a side-by-side comparison.
 
