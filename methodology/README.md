@@ -21,7 +21,7 @@ with
 
 Both `C` and `R` nxn tensors extracted from QMAP node-connection files emitted by Thermal Desktop.
 
-### 1.1 Node and device vocabulary
+### 1.1 Node and Device Nomenclature
 
 | Constant (`src/config.py`) | Value |
 | -------------------------- | ----- |
@@ -46,7 +46,7 @@ A `mapping_matrix ∈ ℝ⁷ˣ²⁶⁴` distributes each device's total power un
 
 ## 2. Dataset
 
-The data-generation pipeline mirrors the paper's distinction between a _small, expensive_ prior dataset and a _large, cheap_ training dataset.
+The data-generation pipeline extracts data from Sinda & randomly generates values for training.
 
 | Dataset                | Size                                           | Purpose                                                      | Cost      |
 | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------ | --------- |
@@ -54,16 +54,16 @@ The data-generation pipeline mirrors the paper's distinction between a _small, e
 | **Physics** (random Q) | 3,200 synthetic device-power vectors per epoch | Drive the physics loss without requiring solver output       | Free      |
 | **Test** (SINDA)       | 500 steady-state runs                          | Final evaluation; never seen during training                 | Expensive |
 
-Data generation is driven by a C# Visual Studio script that parameterizes Thermal Desktop sweeps. The pipeline then:
+Data generation is driven by a C# Visual Studio script that parameterizes Thermal Desktop sweeps. The pipeline then goes into the following data extraction and preprocessing scripts:
 
 | Module                                                                                        | Role                                                        |
 | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `training_node_connections_extraction.py`                                                     | Parses QMAP text files into node + connection CSVs          |
-| `cij_rij_matrix_generation.py`                                                                | Builds sparse `C_matrix`, `R_matrix` PyTorch tensors        |
+| `cij_rij_matrix_generation.py`                                                                | Builds `C_matrix`, `R_matrix` PyTorch tensors               |
 | `Q_input_matrix_generation.py`                                                                | Assembles per-node heat-load matrix from SINDA output       |
 | `T_prior_matrix_generation.py`                                                                | Assembles per-node temperature matrix from SINDA output     |
 | `Q_random_generation.py`                                                                      | Samples synthetic device-power vectors for the physics loss |
-| `test_node_data_extraction.py`, `Q_test_matrix_generation.py`, `T_sinda_matrix_generation.py` | Build the held-out test set                                 |
+| `test_node_data_extraction.py`, `Q_test_matrix_generation.py`, `T_sinda_matrix_generation.py` | Build the test data                                         |
 
 Preprocessing: inputs are standardized with training-set mean and standard deviation (`X_mean`, `X_std`), cached in `models/tensors.pt` alongside the POD basis.
 
@@ -80,12 +80,12 @@ $$\Theta_{\text{prior}} - \bar{T} \; = \; U\,S\,V^{\top}$$
 Variables:
 
 - $\Theta_{\text{prior}}$: prior temperature matrix, shape 264 × 250 (rows are nodes, columns are SINDA runs), units K.
-- $\bar{T}$: mean temperature vector across the 250 runs, shape 264 × 1, units K. Subtracting it centers the data.
+- $\bar{T}$: mean temperature vector across the 250 runs, shape 264 × 1, units K.
 - $U$: left singular vectors, shape 264 × 264. Each column is one spatial temperature pattern (a "mode").
-- $S$: diagonal matrix of singular values, shape 264 × 250. Entry $S_{kk}$ measures how much variance mode $k$ explains.
+- $S$: diagonal matrix of singular values, shape 264 × 250. Entry $S_{kk}$ measures how much variance mode $k$ has.
 - $V^{\top}$: right singular vectors, shape 250 × 250. Each row says how much of each mode appears in the matching SINDA run.
 
-The diagonal of $S$ ranks the modes by importance. We keep the top 40 and throw the rest away:
+The diagonal of $S$ ranks the modes by importance. We keep the top 40 and discard the rest:
 
 $$\Theta_{\text{prior}} - \bar{T} \; \approx \; U_{40}\,S_{40}\,V_{40}^{\top}, \qquad U_{40} \in \mathbb{R}^{264\times 40}$$
 
@@ -102,20 +102,16 @@ $$T \; = \; \bar{T} + \alpha \cdot U_{40}^{\top}$$
 Variables:
 
 - $T$: reconstructed temperature vector for one snapshot, shape 264 × 1, units K.
-- $\alpha$: POD coefficient vector, shape 40 × 1. Each entry says how much of the matching mode is present in this snapshot. This is what the network will predict.
+- $\alpha$: POD coefficient vector, shape 40 × 1. This is what the neaural network will predict and output.
 - $U_{40}^{\top}$: transpose of the POD basis, shape 40 × 264.
-
-**Why 40 modes when 6 would do.** The singular values drop off fast. The top 6 modes already capture 99.9% of the thermal variance, and just 2 cover 99%. We keep 40 anyway. The small higher-order modes describe sharp local gradients near the heat-dissipating devices, and the physics loss needs those modes to be present so it can push on them during training. See `figures/pod_mode_analysis.png` for the spectrum.
-
-`U_40`, `S_40`, and the mean $\bar{T}$ are saved to `models/tensors.pt` so training and inference use the same basis.
 
 ---
 
 ## 4. Network architecture
 
-The network has a simple job. Take 7 device powers in, predict 40 POD coefficients out. Temperatures get reconstructed afterwards by multiplying those coefficients back through $U_{40}$.
+The neaural network takes 7 device powers in, predict 40 POD coefficients out. Temperatures get reconstructed afterwards by multiplying those coefficients back through $U_{40}$.
 
-The surrogate is a small fully-connected MLP, `SpacecraftThermNet` (`src/models/pinn_model.py`):
+The surrogate is a small fully-connected MLP
 
 ```
 Input (7 device powers, standardized)
@@ -132,10 +128,10 @@ Linear(150 → 40)  ──► × S_40  ──►  α  (POD coefficients)
 
 Design choices, and why:
 
-- **SiLU activation.** Smooth gradients matter here because the physics loss takes derivatives through $T(\alpha)$ via the POD basis. The paper uses SiLU for the same reason.
-- **Output scaling by `diag(S_40)`** (paper Eq. 15). The raw network outputs land around order 1. Multiplying by the singular values puts each mode back at its real magnitude, so the network does not have to learn numbers that span many orders.
-- **Last-layer near-zero initialization.** Otherwise the first forward pass multiplies random $\alpha$ by large singular values, producing wild temperatures and a physics loss that explodes in the first few epochs. Starting $\alpha$ near zero keeps predictions close to $\bar{T}$ for the first few steps.
-- **Device-level input (7 numbers, not 264).** Inputs are the 7 device powers that an engineer actually sets. The `mapping_matrix` expands the 7-vector to the full 264-node $Q_{\text{in}}$ needed by the physics loss. This makes the surrogate directly usable by engineers iterating on operational configurations.
+- **SiLU activation.** Smooth gradients matter here because the physics loss takes derivatives through $T(\alpha)$ via the POD basis.
+- **Output scaling by `diag(S_40)`** The raw network outputs land around order 1. Multiplying by the singular values puts each mode back at its real magnitude.
+- **Last-layer near-zero initialization.** Otherwise the first forward pass multiplies random $\alpha$ by large singular values, producing temperatures and a physics loss that explodes in the first few epochs.
+- **Device-level input (7 devices, not 264).** Inputs are the 7 device powers that an engineer sets. The `mapping_matrix` expands the 7-vector to the full 264-node $Q_{\text{in}}$ needed by the physics loss. This makes the surrogate directly usable by engineers iterating on operational configurations.
 
 Temperatures are reconstructed as
 
@@ -144,10 +140,10 @@ $$\hat{T} \; = \; \bar{T} + \alpha \cdot U_{40}^{\top} \; = \; \bar{T} + \text{M
 Variables:
 
 - $\hat{T}$: predicted temperature vector, shape 264 × 1, units K.
-- $\bar{T}$: mean temperature vector (same as section 3), shape 264 × 1, units K.
+- $\bar{T}$: mean temperature vector, shape 264 × 1, units K.
 - $\alpha$: scaled POD coefficients produced by the network, shape 40 × 1.
 - $\text{MLP}(\hat{x})$: raw network output before scaling, shape 40 × 1, order 1 in magnitude.
-- $\hat{x}$: standardized 7-device input (each device power minus its training mean, divided by its training standard deviation), shape 7 × 1.
+- $\hat{x}$: standardized 7-device input, shape 7 × 1.
 - $\text{diag}(S_{40})$: diagonal matrix of the top 40 singular values, shape 40 × 40.
 - $U_{40}^{\top}$: transpose of the POD basis, shape 40 × 264.
 
@@ -157,14 +153,14 @@ Variables:
 
 The total loss blends two terms. A supervised term matches labeled SINDA runs, and a physics term forces predictions to obey the steady-state heat balance:
 
-$$\mathcal{L} \; = \; \mathcal{L}_{\text{data}} \; + \; \lambda\,\mathcal{L}_{\text{phys}}, \qquad \lambda = 0.1$$
+$$\mathcal{L} \ = \; \mathcal{L}_{\text{data}} \ + \; \lambda\,\mathcal{L}_{\text{phys}}, \qquad \lambda = 0.1$$
 
 Variables:
 
 - $\mathcal{L}$: total training loss, scalar.
-- $\mathcal{L}_{\text{data}}$: supervised data loss, scalar (defined in 5.1).
-- $\mathcal{L}_{\text{phys}}$: physics loss, scalar (defined in 5.2).
-- $\lambda$: weighting factor, set to 0.1. Controls how much the physics loss pulls on the network relative to the data loss.
+- $\mathcal{L}_{\text{data}}$: supervised data loss, scalar.
+- $\mathcal{L}_{\text{phys}}$: physics loss, scalar.
+- $\lambda$: weighting factor. Controls how much the physics loss pulls on the network relative to the data loss.
 
 ### 5.1 Data loss (supervised on 250 SINDA runs)
 
@@ -192,26 +188,26 @@ Variables:
 
 ### 5.2 Physics loss (3,200 synthetic Q per epoch)
 
-For each synthetic $Q$, we run the network to get a predicted temperature field, then plug it into the steady-state heat-balance equation (paper Eqs. 16 and 17). If the prediction is physically consistent, the residual is zero. If not, the network gets pushed to fix it.
+For each synthetic $Q$, we run the network to get a predicted temperature field, then plug it into the steady-state heat-balance equation. If the prediction is physically consistent, the residual is zero. If not, the network gets pushed to fix it.
 
 For a batch of synthetic device-power vectors, we expand each one to a per-node $Q_{\text{in}}$ via the mapping matrix, pass it through the network to get $\hat{T}$, and compute the residual:
 
-$$r(\hat{T}) \; = \; Q_{\text{in}} \;-\; \hat{T} \cdot C \;-\; \sigma\,\hat{T}^{\,4} \cdot R$$
+$$r(\hat{T}) \ = \ Q_{\text{in}} \-\ \hat{T} \cdot C \-\ \sigma\,\hat{T}^{\,4} \cdot R$$
 
 Variables:
 
-- $r(\hat{T})$: steady-state heat-balance residual per node, shape 264 × 1, units W. Zero means perfect physical consistency.
+- $r(\hat{T})$: steady-state heat-balance residual per node, shape 264 × 1, units W.
 - $Q_{\text{in}}$: per-node heat-load vector (external environment plus internal device dissipation), shape 264 × 1, units W.
 - $\hat{T}$: predicted temperature vector, shape 264 × 1, units K.
 - $C$: conductance matrix, shape 264 × 264, units W/K. The product $\hat{T} \cdot C$ gives the conductive heat flow out of each node in W.
 - $\sigma$: Stefan-Boltzmann constant, $5.67 \times 10^{-8}$ W/m²/K⁴.
-- $R$: radiative exchange factor matrix, shape 264 × 264. The product $\hat{T}^{\,4} \cdot R$ (with $\sigma$ in front) gives the radiative heat flow out of each node in W.
+- $R$: radiative exchange factor matrix, shape 264 × 264. The product $\hat{T}^{\4} \cdot R$ (with $\sigma$ in front) gives the radiative heat flow out of each node in W.
 
 We also add back the missing radiative exchange with deep space at $T_{\text{space}} = 3$ K. The TMM's $R$ matrix does not include a dedicated space node, so we patch that term in here.
 
 The core physics loss is the MSE of the residual across the batch:
 
-$$\mathcal{L}_1 \; = \; \text{MSE}\bigl(r(\hat{T})\bigr)$$
+$$\mathcal{L}_1 \ = \ \text{MSE}\bigl(r(\hat{T})\bigr)$$
 
 Variables:
 
@@ -219,7 +215,7 @@ Variables:
 
 On top of that, we add a hinge penalty for any predicted temperature below absolute zero (Eq. 17). It only activates when the network predicts something unphysical, and nudges it back up:
 
-$$\mathcal{L}_2 \; = \; \begin{cases} \min(\hat{T})^2 & \text{if } \min(\hat{T}) < 0 \\ 0 & \text{otherwise} \end{cases}$$
+$$\mathcal{L}_2 \ = \ \begin{cases} \min(\hat{T})^2 & \text{if } \min(\hat{T}) < 0 \\ 0 & \text{otherwise} \end{cases}$$
 
 Variables:
 
@@ -228,18 +224,7 @@ Variables:
 
 The full physics loss is just the sum:
 
-$$\mathcal{L}_{\text{phys}} \; = \; \mathcal{L}_1 + \mathcal{L}_2$$
-
-### 5.3 Why hybrid
-
-Pure POD-PIML (the paper) uses only $\mathcal{L}_{\text{phys}}$ and leans on the POD basis to regularize. Pure POD-ANN uses only $\mathcal{L}_{\text{data}}$ and needs many expensive SINDA runs. The hybrid used here takes advantage of both. Labels anchor the network where we have them, and physics keeps it honest everywhere else:
-
-| Regime                      | What the loss gives you                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| Near training data          | `L_data` locks the prediction onto known solutions                                          |
-| Far from training data      | `L_phys` keeps the prediction physically consistent via the heat-balance residual           |
-| Radiation-dominated regions | `L_phys` enforces the σT⁴ term that a pure data loss can't "see" under distribution shift   |
-| Non-physical outputs        | `L₂` clamps negative temperatures to zero                                                   |
+$$\mathcal{L}_{\text{phys}} \ = \; \mathcal{L}_1 + \mathcal{L}_2$$
 
 ---
 

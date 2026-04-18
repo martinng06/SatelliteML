@@ -2,7 +2,7 @@
 
 A PyTorch surrogate model that predicts the steady-state temperature of all **264 nodes** of a spacecraft thermal model from **7 device power inputs**, trained on a hybrid of supervised SINDA simulation data and physics-informed heat-balance residuals.
 
-**Martin Nguyen** — Aerospace Engineering, Physics minor — San José State University
+**Martin Nguyen** — Aerospace Engineering, Physics minor — San José State University  
 [GitHub](https://github.com/martinng06/SatelliteML) · [LinkedIn](https://www.linkedin.com/in/martinnguyen0/) · marngu06@gmail.com
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
@@ -15,11 +15,11 @@ A PyTorch surrogate model that predicts the steady-state temperature of all **26
 
 ## Overview
 
-Spacecraft thermal analysis is slow. A single steady-state run in Thermal Desktop / SINDA takes minutes; robust design sweeps need hundreds or thousands of them, and the combinatorics of attitude × orbit × duty-cycle × device-power make the full design space effectively unreachable with the simulator alone.
+Spacecraft thermal analysis is slow. A single steady-state run in Thermal Desktop / SINDA is computationally expensive and the combinatorics of attitude × orbit × duty-cycle × device-power make the full design space effectively unreachable with the simulator alone.
 
-This project builds a **Physics-Informed Neural Network (PINN) surrogate** that collapses that cost to milliseconds. The pipeline ingests 250 steady-state SINDA runs, compresses the 264-node temperature response into 40 POD (proper orthogonal decomposition) modes via SVD, and trains a small MLP to predict the POD coefficients from device-level power inputs. A physics loss — the residual of the steady-state heat-balance equation on the reconstructed temperature field — is blended with the supervised data loss so the network learns solutions that respect conduction and radiation, not just the training distribution.
+This project builds a **Physics-Informed Neural Network (PINN) surrogate** that collapses that cost to milliseconds. The pipeline ingests 250 steady-state SINDA runs, compresses the 264-node temperature response into 40 POD (proper orthogonal decomposition) modes via SVD, and trains a small MLP to predict the POD coefficients from device-level power inputs. A physics loss is blended with the supervised data loss so the network learns solutions that respect conduction and radiation, not just the training distribution.
 
-The approach follows Tanaka & Nagai's POD-PIML methodology (_International Journal of Heat and Mass Transfer_ 213, 2023), extended here with a **hybrid supervised + physics loss** and a **device-level input interface** that maps directly onto operational parameters engineers actually vary.
+The approach follows Tanaka & Nagai's POD-PIML methodology (_International Journal of Heat and Mass Transfer_ 213, 2023), extended here with a **hybrid supervised + physics loss** and a **device-level input interface** that maps directly onto operational parameters engineers vary.
 
 ---
 
