@@ -51,7 +51,7 @@ The data-generation pipeline extracts data from Sinda & randomly generates value
 | Dataset                | Size                                           | Purpose                                                      | Cost      |
 | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------ | --------- |
 | **Prior** (SINDA runs) | 250 steady-state runs                          | Build POD basis; supervise the model on labeled (Q, T) pairs | Expensive |
-| **Physics** (random Q) | 3,200 synthetic device-power vectors per epoch | Drive the physics loss without requiring solver output       | Free      |
+| **Physics** (random Q) | 3,200 synthetic device-power vectors per epoch | Drive the physics loss without requiring solver output       | Low       |
 | **Test** (SINDA)       | 500 steady-state runs                          | Final evaluation; never seen during training                 | Expensive |
 
 Data generation is driven by a C# Visual Studio script that parameterizes Thermal Desktop sweeps. The pipeline then goes into the following data extraction and preprocessing scripts:
@@ -71,7 +71,7 @@ Preprocessing: inputs are standardized with training-set mean and standard devia
 
 ## 3. Dimensionality reduction via POD
 
-We want to represent the full 264-node temperature field with far fewer numbers. POD does this by finding the recurring spatial patterns hidden inside our 250 SINDA runs.
+We want to represent the full 264-node temperature field with far fewer numbers. POD does this by finding the spatial patterns inside our 250 SINDA runs.
 
 Each column of the prior temperature matrix $\Theta_{\text{prior}} \in \mathbb{R}^{264 \times 250}$ is one SINDA run's temperature across all 264 nodes. We center the matrix by subtracting the mean temperature, then run SVD on it:
 
@@ -111,7 +111,7 @@ Variables:
 
 The neaural network takes 7 device powers in, predict 40 POD coefficients out. Temperatures get reconstructed afterwards by multiplying those coefficients back through $U_{40}$.
 
-The surrogate is a small fully-connected MLP
+The surrogate is a small fully-connected Neural Network
 
 ```
 Input (7 device powers, standardized)
@@ -126,12 +126,12 @@ Linear(150 → 150) ──► SiLU
 Linear(150 → 40)  ──► × S_40  ──►  α  (POD coefficients)
 ```
 
-Design choices, and why:
+Design choices:
 
 - **SiLU activation.** Smooth gradients matter here because the physics loss takes derivatives through $T(\alpha)$ via the POD basis.
 - **Output scaling by `diag(S_40)`** The raw network outputs land around order 1. Multiplying by the singular values puts each mode back at its real magnitude.
-- **Last-layer near-zero initialization.** Otherwise the first forward pass multiplies random $\alpha$ by large singular values, producing temperatures and a physics loss that explodes in the first few epochs.
-- **Device-level input (7 devices, not 264).** Inputs are the 7 device powers that an engineer sets. The `mapping_matrix` expands the 7-vector to the full 264-node $Q_{\text{in}}$ needed by the physics loss. This makes the surrogate directly usable by engineers iterating on operational configurations.
+
+- **Device-level input (7 devices, not 264).** Inputs are the 7 device powers that an engineer sets. The `mapping_matrix` expands the 7-vector to the full 264-node $Q_{\text{in}}$ needed by the physics loss. This makes the surrogate directly usable by engineers iterating on operational variables.
 
 Temperatures are reconstructed as
 
@@ -153,7 +153,7 @@ Variables:
 
 The total loss blends two terms. A supervised term matches labeled SINDA runs, and a physics term forces predictions to obey the steady-state heat balance:
 
-$$\mathcal{L} \ = \; \mathcal{L}_{\text{data}} \ + \; \lambda\,\mathcal{L}_{\text{phys}}, \qquad \lambda = 0.1$$
+$$\mathcal{L} \ = \ \mathcal{L}_{\text{data}} \ + \ \lambda\,\mathcal{L}_{\text{phys}} \qquad \lambda = 0.1$$
 
 Variables:
 
@@ -230,29 +230,25 @@ $$\mathcal{L}_{\text{phys}} \ = \; \mathcal{L}_1 + \mathcal{L}_2$$
 
 ## 6. Training
 
-| Setting          | Value                       |
-| ---------------- | --------------------------- |
-| Optimizer        | Adam                        |
-| Learning rate    | 1 × 10⁻⁴                    |
-| Epochs           | 30 000                      |
-| Supervised batch | 250 (full) per epoch        |
-| Physics batch    | 3 200 random Q per epoch    |
-| Physics weight λ | 0.1                         |
-| Deep-space T     | 3.0 K                       |
-| Activation       | SiLU                        |
-| Hardware         | CUDA if available, else CPU |
-
-**Best-model tracking.** During training we keep a running best checkpoint based on a combined validation metric, and save the winning weights to `models/spacecraft_therm_net.pth` at the end. The companion `models/tensors.pt` stores everything inference needs (`U_40`, `S_40`, `T_mean`, `X_mean`, `X_std`, the `mapping_matrix`, and `Q_env`), so loading the model is self-contained.
-
----
+| Setting          | Value                    |
+| ---------------- | ------------------------ |
+| Optimizer        | Adam                     |
+| Learning rate    | 1 × 10⁻⁴                 |
+| Epochs           | 30,000                   |
+| Supervised batch | 250 per epoch            |
+| Physics batch    | 3,200 random Q per epoch |
+| Physics weight λ | 0.1                      |
+| Deep-space T     | 3.0 K                    |
+| Activation       | SiLU                     |
+| Hardware         | AMD AMD Ryzen5 3600 CPU  |
 
 ## 7. Evaluation
 
-`pipeline/03_evaluate_model.py` reconstructs temperatures on the held-out 500-run SINDA test set and writes `data/processed/T_predict_matrix.csv` (264 nodes × 500 runs). The `notebooks/03_Model_Evaluation_and_Plots.ipynb` notebook produces the 9 publication figures.
+We reconstruct temperatures on the 500-run SINDA test set and write the reuslts to a csv file. Then we use Jupyter to analyze and post process the data.
 
 ### 7.1 Results
 
-**Global error metrics** (132 000 predictions):
+**Global error metrics** (132,000 predictions):
 
 |           | Value   |
 | --------- | ------- |
@@ -280,7 +276,7 @@ $$\mathcal{L}_{\text{phys}} \ = \; \mathcal{L}_1 + \mathcal{L}_2$$
 | SINDA ground truth | 0.199 W           | 33.58 W          |
 | PINN prediction    | 0.200 W           | 32.86 W          |
 
-The PINN satisfies the steady-state heat balance to the same tolerance as SINDA itself — the solver's own convergence is the floor.
+The PINN satisfies the steady-state heat balance to the same tolerance as SINDA itself.
 
 **Non-negativity**: 0 / 132 000 predictions below 0 K (min $\hat{T} = 225.22$ K).
 
@@ -294,15 +290,9 @@ _Median run (`run_192`) — predicted vs. ground-truth profile over all 264 node
 
 ## 8. Limitations
 
-- **Steady-state only.** No transient dynamics; the paper's formulation already handles only the steady-state case, and extending to transient would require stepping the heat equation in time within the loss.
-- **Held-out test set is SINDA, not flight data.** The surrogate's accuracy vs. reality is bounded by SINDA's own fidelity to the physical article.
-- **Single spacecraft geometry.** `C`, `R`, and the mapping matrix are baked into the model; transfer to a new TMM requires retraining. A graph-neural-network formulation over the node connectivity graph is a natural generalization.
-- **No formal ablation.** A clean comparison of (pure POD-PIML, pure POD-ANN, hybrid) on this exact 264-node TMM would be a useful follow-up — the hybrid's benefits are currently argued, not measured.
-- **Worst-case failure mode.** `run_91` with 13.35 K MAE is ~12× the global mean. That run warrants individual diagnosis — likely an operational corner outside the prior data's convex hull, where the physics loss has to carry the prediction alone.
-
-Directions under consideration: transient extension, a pure POD-PIML ablation, active learning to choose the next SINDA run adaptively, and a graph-conditioned architecture for transfer across TMMs.
-
----
+- **Steady-state only.** No transient dynamics; extending to transient would require expanding the heat equations into the time dimension, adding to the complexity of the loss function.
+- **Held-out test set is SINDA** The surrogate's accuracy vs. reality is bounded by SINDA's own fidelity to the physical reality.
+- **Single spacecraft geometry.** `C`, `R`, and the mapping matrix are baked into the model; transfer to a new TMM requires retraining.
 
 ## 9. References
 
