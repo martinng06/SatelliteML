@@ -71,25 +71,49 @@ Preprocessing: inputs are standardized with training-set mean and standard devia
 
 ## 3. Dimensionality reduction via POD
 
-The prior temperature matrix $\Theta_{\text{prior}} \in \mathbb{R}^{264 \times 250}$ is centered and decomposed via SVD:
+We want to represent the full 264-node temperature field with far fewer numbers. POD does this by finding the recurring spatial patterns hidden inside our 250 SINDA runs.
+
+Each column of the prior temperature matrix $\Theta_{\text{prior}} \in \mathbb{R}^{264 \times 250}$ is one SINDA run's temperature across all 264 nodes. We center the matrix by subtracting the mean temperature, then run SVD on it:
 
 $$\Theta_{\text{prior}} - \bar{T} \; = \; U\,S\,V^{\top}$$
 
-Truncating to $r = 40$ modes gives
+Variables:
+
+- $\Theta_{\text{prior}}$: prior temperature matrix, shape 264 × 250 (rows are nodes, columns are SINDA runs), units K.
+- $\bar{T}$: mean temperature vector across the 250 runs, shape 264 × 1, units K. Subtracting it centers the data.
+- $U$: left singular vectors, shape 264 × 264. Each column is one spatial temperature pattern (a "mode").
+- $S$: diagonal matrix of singular values, shape 264 × 250. Entry $S_{kk}$ measures how much variance mode $k$ explains.
+- $V^{\top}$: right singular vectors, shape 250 × 250. Each row says how much of each mode appears in the matching SINDA run.
+
+The diagonal of $S$ ranks the modes by importance. We keep the top 40 and throw the rest away:
 
 $$\Theta_{\text{prior}} - \bar{T} \; \approx \; U_{40}\,S_{40}\,V_{40}^{\top}, \qquad U_{40} \in \mathbb{R}^{264\times 40}$$
 
-and the temperature distribution for any snapshot can be expressed by a coefficient vector $\alpha \in \mathbb{R}^{40}$:
+Variables:
+
+- $U_{40}$: the first 40 columns of $U$, shape 264 × 40. These are the 40 most important spatial temperature patterns.
+- $S_{40}$: the top 40 singular values, shape 40 × 40 diagonal.
+- $V_{40}^{\top}$: the first 40 rows of $V^{\top}$, shape 40 × 250.
+
+Once we have $U_{40}$, any temperature snapshot can be written as a short coefficient vector $\alpha \in \mathbb{R}^{40}$ instead of a 264-long vector:
 
 $$T \; = \; \bar{T} + \alpha \cdot U_{40}^{\top}$$
 
-**Why 40 when 6 would suffice:** the singular-value spectrum of this 264-node TMM decays fast — 99.9% of the thermal variance is captured by the top 6 modes, and 99% by just 2. `r = 40` is intentionally over-specified so that small higher-order modes — which dominate localized gradients near heat-dissipating components — are preserved for the physics loss to act on. See `figures/pod_mode_analysis.png` for the spectrum.
+Variables:
 
-`U_40`, `S_40`, and the centering mean $\bar{T}$ are cached in `models/tensors.pt` so training and inference use the same basis.
+- $T$: reconstructed temperature vector for one snapshot, shape 264 × 1, units K.
+- $\alpha$: POD coefficient vector, shape 40 × 1. Each entry says how much of the matching mode is present in this snapshot. This is what the network will predict.
+- $U_{40}^{\top}$: transpose of the POD basis, shape 40 × 264.
+
+**Why 40 modes when 6 would do.** The singular values drop off fast. The top 6 modes already capture 99.9% of the thermal variance, and just 2 cover 99%. We keep 40 anyway. The small higher-order modes describe sharp local gradients near the heat-dissipating devices, and the physics loss needs those modes to be present so it can push on them during training. See `figures/pod_mode_analysis.png` for the spectrum.
+
+`U_40`, `S_40`, and the mean $\bar{T}$ are saved to `models/tensors.pt` so training and inference use the same basis.
 
 ---
 
 ## 4. Network architecture
+
+The network has a simple job. Take 7 device powers in, predict 40 POD coefficients out. Temperatures get reconstructed afterwards by multiplying those coefficients back through $U_{40}$.
 
 The surrogate is a small fully-connected MLP, `SpacecraftThermNet` (`src/models/pinn_model.py`):
 
@@ -108,59 +132,114 @@ Linear(150 → 40)  ──► × S_40  ──►  α  (POD coefficients)
 
 Design choices, and why:
 
-- **SiLU activation** — matches the paper; smooth first derivative is desirable when the physics loss takes gradients through `T(α)` via the POD basis.
-- **Output scaling by `diag(S_40)`** (paper Eq. 15) — the raw network outputs are O(1); multiplying by the singular values restores the correct per-mode magnitude so the network doesn't need to learn very large / very small numbers.
-- **Last-layer near-zero initialization** — without this, initial $\alpha$ values multiplied by large singular values produce wild temperature fields and the physics loss explodes in the first few epochs. Zero-init keeps the start close to $\bar{T}$.
-- **Device-level input** — inputs are the 7 device powers, not the 264-vector of per-node heat loads. The `mapping_matrix` expands the 7-vector to the full $Q_{\text{in}}$ for the physics loss. This makes the surrogate directly usable by engineers iterating on operational configurations.
+- **SiLU activation.** Smooth gradients matter here because the physics loss takes derivatives through $T(\alpha)$ via the POD basis. The paper uses SiLU for the same reason.
+- **Output scaling by `diag(S_40)`** (paper Eq. 15). The raw network outputs land around order 1. Multiplying by the singular values puts each mode back at its real magnitude, so the network does not have to learn numbers that span many orders.
+- **Last-layer near-zero initialization.** Otherwise the first forward pass multiplies random $\alpha$ by large singular values, producing wild temperatures and a physics loss that explodes in the first few epochs. Starting $\alpha$ near zero keeps predictions close to $\bar{T}$ for the first few steps.
+- **Device-level input (7 numbers, not 264).** Inputs are the 7 device powers that an engineer actually sets. The `mapping_matrix` expands the 7-vector to the full 264-node $Q_{\text{in}}$ needed by the physics loss. This makes the surrogate directly usable by engineers iterating on operational configurations.
 
 Temperatures are reconstructed as
 
 $$\hat{T} \; = \; \bar{T} + \alpha \cdot U_{40}^{\top} \; = \; \bar{T} + \text{MLP}(\hat{x}) \cdot \text{diag}(S_{40}) \cdot U_{40}^{\top}$$
 
+Variables:
+
+- $\hat{T}$: predicted temperature vector, shape 264 × 1, units K.
+- $\bar{T}$: mean temperature vector (same as section 3), shape 264 × 1, units K.
+- $\alpha$: scaled POD coefficients produced by the network, shape 40 × 1.
+- $\text{MLP}(\hat{x})$: raw network output before scaling, shape 40 × 1, order 1 in magnitude.
+- $\hat{x}$: standardized 7-device input (each device power minus its training mean, divided by its training standard deviation), shape 7 × 1.
+- $\text{diag}(S_{40})$: diagonal matrix of the top 40 singular values, shape 40 × 40.
+- $U_{40}^{\top}$: transpose of the POD basis, shape 40 × 264.
+
 ---
 
 ## 5. Loss function
 
-Total loss is a blend of a supervised data term (POD-ANN style) and the paper's physics term:
+The total loss blends two terms. A supervised term matches labeled SINDA runs, and a physics term forces predictions to obey the steady-state heat balance:
 
 $$\mathcal{L} \; = \; \mathcal{L}_{\text{data}} \; + \; \lambda\,\mathcal{L}_{\text{phys}}, \qquad \lambda = 0.1$$
 
+Variables:
+
+- $\mathcal{L}$: total training loss, scalar.
+- $\mathcal{L}_{\text{data}}$: supervised data loss, scalar (defined in 5.1).
+- $\mathcal{L}_{\text{phys}}$: physics loss, scalar (defined in 5.2).
+- $\lambda$: weighting factor, set to 0.1. Controls how much the physics loss pulls on the network relative to the data loss.
+
 ### 5.1 Data loss (supervised on 250 SINDA runs)
 
-For each training pair `(Q_i, T_i)`, the target POD coefficients are obtained by projection:
+For each training pair, we project the true SINDA temperature onto the POD basis to get the "target" coefficients the network should have produced. Then we train the network to match those targets.
 
 $$\alpha^{\star}_i \; = \; (T_i - \bar{T}) \cdot U_{40}$$
 
-and the data loss is MSE in coefficient space:
+Variables:
+
+- $\alpha^{\star}_i$: target POD coefficients for training pair $i$, shape 40 × 1.
+- $T_i$: true SINDA temperature vector for pair $i$, shape 264 × 1, units K.
+- $\bar{T}$: mean temperature vector (same as section 3), shape 264 × 1, units K.
+- $U_{40}$: POD basis, shape 264 × 40.
+
+The data loss is mean squared error between the network's predicted coefficients and the targets:
 
 $$\mathcal{L}_{\text{data}} \; = \; \frac{1}{N_{\text{sup}}} \sum_{i=1}^{N_{\text{sup}}} \bigl\| \hat{\alpha}_i - \alpha^{\star}_i \bigr\|^2_2$$
 
+Variables:
+
+- $\hat{\alpha}_i$: network's predicted POD coefficients for pair $i$, shape 40 × 1.
+- $\alpha^{\star}_i$: target POD coefficients from above.
+- $N_{\text{sup}}$: number of supervised training pairs per epoch, equal to 250.
+- $\| \cdot \|^2_2$: squared Euclidean norm (sum of squared entries).
+
 ### 5.2 Physics loss (3,200 synthetic Q per epoch)
 
-Paper Eqs. 16–17, adapted with a deep-space boundary correction. For a batch of synthetic device-power vectors, expand to per-node $Q_{\text{in}}$ via the mapping matrix, pass through the network to get $\hat{T}$, and compute the steady-state heat-balance residual:
+For each synthetic $Q$, we run the network to get a predicted temperature field, then plug it into the steady-state heat-balance equation (paper Eqs. 16 and 17). If the prediction is physically consistent, the residual is zero. If not, the network gets pushed to fix it.
+
+For a batch of synthetic device-power vectors, we expand each one to a per-node $Q_{\text{in}}$ via the mapping matrix, pass it through the network to get $\hat{T}$, and compute the residual:
 
 $$r(\hat{T}) \; = \; Q_{\text{in}} \;-\; \hat{T} \cdot C \;-\; \sigma\,\hat{T}^{\,4} \cdot R$$
 
-with a correction term adding back the missing radiative exchange with deep space at $T_{\text{space}} = 3$ K (since the TMM's `R` matrix does not include a dedicated space node). The physics loss is
+Variables:
+
+- $r(\hat{T})$: steady-state heat-balance residual per node, shape 264 × 1, units W. Zero means perfect physical consistency.
+- $Q_{\text{in}}$: per-node heat-load vector (external environment plus internal device dissipation), shape 264 × 1, units W.
+- $\hat{T}$: predicted temperature vector, shape 264 × 1, units K.
+- $C$: conductance matrix, shape 264 × 264, units W/K. The product $\hat{T} \cdot C$ gives the conductive heat flow out of each node in W.
+- $\sigma$: Stefan-Boltzmann constant, $5.67 \times 10^{-8}$ W/m²/K⁴.
+- $R$: radiative exchange factor matrix, shape 264 × 264. The product $\hat{T}^{\,4} \cdot R$ (with $\sigma$ in front) gives the radiative heat flow out of each node in W.
+
+We also add back the missing radiative exchange with deep space at $T_{\text{space}} = 3$ K. The TMM's $R$ matrix does not include a dedicated space node, so we patch that term in here.
+
+The core physics loss is the MSE of the residual across the batch:
 
 $$\mathcal{L}_1 \; = \; \text{MSE}\bigl(r(\hat{T})\bigr)$$
 
-plus a hinge penalty for any predicted temperature below absolute zero (Eq. 17):
+Variables:
+
+- $\mathcal{L}_1$: mean squared heat-balance residual across the batch, scalar, units W².
+
+On top of that, we add a hinge penalty for any predicted temperature below absolute zero (Eq. 17). It only activates when the network predicts something unphysical, and nudges it back up:
 
 $$\mathcal{L}_2 \; = \; \begin{cases} \min(\hat{T})^2 & \text{if } \min(\hat{T}) < 0 \\ 0 & \text{otherwise} \end{cases}$$
+
+Variables:
+
+- $\mathcal{L}_2$: non-negativity penalty, scalar, units K².
+- $\min(\hat{T})$: the smallest predicted temperature in the batch, units K.
+
+The full physics loss is just the sum:
 
 $$\mathcal{L}_{\text{phys}} \; = \; \mathcal{L}_1 + \mathcal{L}_2$$
 
 ### 5.3 Why hybrid
 
-Pure POD-PIML (paper) uses only $\mathcal{L}_{\text{phys}}$ and relies on the POD basis to regularize. Pure POD-ANN uses only $\mathcal{L}_{\text{data}}$ and requires many solver-generated labels. The hybrid used here benefits from both:
+Pure POD-PIML (the paper) uses only $\mathcal{L}_{\text{phys}}$ and leans on the POD basis to regularize. Pure POD-ANN uses only $\mathcal{L}_{\text{data}}$ and needs many expensive SINDA runs. The hybrid used here takes advantage of both. Labels anchor the network where we have them, and physics keeps it honest everywhere else:
 
-| Regime                      | What the loss gives you                                                                   |
-| --------------------------- | ----------------------------------------------------------------------------------------- |
-| Near training data          | `L_data` locks the prediction onto known solutions                                        |
-| Far from training data      | `L_phys` keeps the prediction physically consistent via the heat-balance residual         |
-| Radiation-dominated regions | `L_phys` enforces the σT⁴ term that a pure data loss can't "see" under distribution shift |
-| Non-physical outputs        | `L₂` clamps negative temperatures to zero                                                 |
+| Regime                      | What the loss gives you                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| Near training data          | `L_data` locks the prediction onto known solutions                                          |
+| Far from training data      | `L_phys` keeps the prediction physically consistent via the heat-balance residual           |
+| Radiation-dominated regions | `L_phys` enforces the σT⁴ term that a pure data loss can't "see" under distribution shift   |
+| Non-physical outputs        | `L₂` clamps negative temperatures to zero                                                   |
 
 ---
 
@@ -178,7 +257,7 @@ Pure POD-PIML (paper) uses only $\mathcal{L}_{\text{phys}}$ and relies on the PO
 | Activation       | SiLU                        |
 | Hardware         | CUDA if available, else CPU |
 
-**Best-model tracking.** Training keeps a running best checkpoint based on a combined validation metric and writes the winning state to `models/spacecraft_therm_net.pth` at the end. The companion `models/tensors.pt` caches `U_40`, `S_40`, `T_mean`, `X_mean`, `X_std`, the `mapping_matrix`, and `Q_env` so inference is self-contained.
+**Best-model tracking.** During training we keep a running best checkpoint based on a combined validation metric, and save the winning weights to `models/spacecraft_therm_net.pth` at the end. The companion `models/tensors.pt` stores everything inference needs (`U_40`, `S_40`, `T_mean`, `X_mean`, `X_std`, the `mapping_matrix`, and `Q_env`), so loading the model is self-contained.
 
 ---
 
