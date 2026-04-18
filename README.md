@@ -102,7 +102,7 @@ satellite-thermal-ml/
 - **ML:** PyTorch, NumPy, SciPy
 - **Data pipeline:** Python modules for QMAP parsing, conductance-matrix assembly (C, R ∈ ℝ²⁶⁴ˣ²⁶⁴), and SVD
 - **Analysis:** Matplotlib, Seaborn, Pandas, Jupyter
-- **Training:** Adam optimizer, lr 1e-4, 30 000 epochs
+- **Training:** Adam optimizer, lr 1e-4, 30,000 epochs
 
 ---
 

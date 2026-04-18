@@ -10,7 +10,7 @@ Thermal design of a spacecraft requires solving a steady-state heat balance at e
 
 At each of the `n = 264` nodes, steady state requires:
 
-$$Q_{\text{in},i} \; - \; \sum_{j=1}^{n} C_{ij}\,(T_i - T_j) \; - \; \sigma \sum_{j=1}^{n} R_{ij}\,(T_i^4 - T_j^4) \; = \; 0$$
+$$Q_{\text{in},i} \ - \ \sum_{j=1}^{n} C_{ij}\,(T_i - T_j) \ - \ \sigma \sum_{j=1}^{n} R_{ij}\,(T_i^4 - T_j^4) \ = \ 0$$
 
 with
 
@@ -75,7 +75,7 @@ We want to represent the full 264-node temperature field with far fewer numbers.
 
 Each column of the prior temperature matrix $\Theta_{\text{prior}} \in \mathbb{R}^{264 \times 250}$ is one SINDA run's temperature across all 264 nodes. We center the matrix by subtracting the mean temperature, then run SVD on it:
 
-$$\Theta_{\text{prior}} - \bar{T} \; = \; U\,S\,V^{\top}$$
+$$\Theta_{\text{prior}} - \bar{T} \ = \ U\,S\,V^{\top}$$
 
 Variables:
 
@@ -87,7 +87,7 @@ Variables:
 
 The diagonal of $S$ ranks the modes by importance. We keep the top 40 and discard the rest:
 
-$$\Theta_{\text{prior}} - \bar{T} \; \approx \; U_{40}\,S_{40}\,V_{40}^{\top}, \qquad U_{40} \in \mathbb{R}^{264\times 40}$$
+$$\Theta_{\text{prior}} - \bar{T} \ \approx \ U_{40}\,S_{40}\,V_{40}^{\top}, \qquad U_{40} \in \mathbb{R}^{264\times 40}$$
 
 Variables:
 
@@ -97,7 +97,7 @@ Variables:
 
 Once we have $U_{40}$, any temperature snapshot can be written as a short coefficient vector $\alpha \in \mathbb{R}^{40}$ instead of a 264-long vector:
 
-$$T \; = \; \bar{T} + \alpha \cdot U_{40}^{\top}$$
+$$T \ = \ \bar{T} + \alpha \cdot U_{40}^{\top}$$
 
 Variables:
 
@@ -135,7 +135,7 @@ Design choices:
 
 Temperatures are reconstructed as
 
-$$\hat{T} \; = \; \bar{T} + \alpha \cdot U_{40}^{\top} \; = \; \bar{T} + \text{MLP}(\hat{x}) \cdot \text{diag}(S_{40}) \cdot U_{40}^{\top}$$
+$$\hat{T} \ = \ \bar{T} + \alpha \cdot U_{40}^{\top} \ = \ \bar{T} + \text{MLP}(\hat{x}) \cdot \text{diag}(S_{40}) \cdot U_{40}^{\top}$$
 
 Variables:
 
@@ -166,7 +166,7 @@ Variables:
 
 For each training pair, we project the true SINDA temperature onto the POD basis to get the "target" coefficients the network should have produced. Then we train the network to match those targets.
 
-$$\alpha^{\star}_i \; = \; (T_i - \bar{T}) \cdot U_{40}$$
+$$\alpha^{\star}_i \ = \ (T_i - \bar{T}) \cdot U_{40}$$
 
 Variables:
 
@@ -177,7 +177,7 @@ Variables:
 
 The data loss is mean squared error between the network's predicted coefficients and the targets:
 
-$$\mathcal{L}_{\text{data}} \; = \; \frac{1}{N_{\text{sup}}} \sum_{i=1}^{N_{\text{sup}}} \bigl\| \hat{\alpha}_i - \alpha^{\star}_i \bigr\|^2_2$$
+$$\mathcal{L}_{\text{data}} \ = \ \frac{1}{N_{\text{sup}}} \sum_{i=1}^{N_{\text{sup}}} \bigl\| \hat{\alpha}_i - \alpha^{\star}_i \bigr\|^2_2$$
 
 Variables:
 
@@ -224,7 +224,7 @@ Variables:
 
 The full physics loss is just the sum:
 
-$$\mathcal{L}_{\text{phys}} \ = \; \mathcal{L}_1 + \mathcal{L}_2$$
+$$\mathcal{L}_{\text{phys}} \ = \ \mathcal{L}_1 + \mathcal{L}_2$$
 
 ---
 
@@ -278,7 +278,7 @@ We reconstruct temperatures on the 500-run SINDA test set and write the reuslts 
 
 The PINN satisfies the steady-state heat balance to the same tolerance as SINDA itself.
 
-**Non-negativity**: 0 / 132 000 predictions below 0 K (min $\hat{T} = 225.22$ K).
+**Non-negativity**: 0 / 132,000 predictions below 0 K (min $\hat{T} = 225.22$ K).
 
 <p align="center">
   <img src="../figures/median_run_detailed.png" width="780" alt="PINN prediction vs. SINDA ground truth across all 264 nodes for the median-difficulty test run.">
