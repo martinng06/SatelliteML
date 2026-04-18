@@ -1,8 +1,8 @@
 # Satellite Thermal Analysis with Physics-Informed Neural Networks
 
-A PyTorch surrogate model that predicts the steady-state temperature of all **264 nodes** of a spacecraft thermal model from just **7 device power inputs** — trained on a blend of supervised SINDA simulation data and physics-informed heat-balance residuals, inspired by Tanaka & Nagai (2023).
+A PyTorch surrogate model that predicts the steady-state temperature of all **264 nodes** of a spacecraft thermal model from **7 device power inputs**, trained on a hybrid of supervised SINDA simulation data and physics-informed heat-balance residuals.
 
-**Martin Nguyen test** — Aerospace Engineering, Physics minor — San José State University (Class of 2028)
+**Martin Nguyen** — Aerospace Engineering, Physics minor — San José State University
 [GitHub](https://github.com/martinng06/SatelliteML) · [LinkedIn](https://www.linkedin.com/in/martinnguyen0/) · marngu06@gmail.com
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
@@ -11,21 +11,9 @@ A PyTorch surrogate model that predicts the steady-state temperature of all **26
 ![Thermal Desktop](https://img.shields.io/badge/Thermal%20Desktop-SINDA-005F9E)
 ![Physics-Informed](https://img.shields.io/badge/Physics--Informed-ML-6a1b9a)
 
-> Public-facing results showcase. The full codebase, raw simulation data, and C# Thermal Desktop automation layer live in a private repo — happy to walk through either on request.
-
 ---
 
-## Headline result
-
-<p align="center">
-  <img src="figures/median_run_detailed.png" width="780" alt="Predicted vs. SINDA temperatures across all 264 nodes for the median-difficulty held-out test run, with per-node error residuals in the lower panel.">
-</p>
-
-_A representative median-difficulty test case from the 500-run held-out set. Top: predicted (dashed) vs. SINDA ground truth (solid) for all 264 nodes. Bottom: per-node error, bounded within ±2 K for the majority of nodes._
-
----
-
-## What this project does
+## Overview
 
 Spacecraft thermal analysis is slow. A single steady-state run in Thermal Desktop / SINDA takes minutes; robust design sweeps need hundreds or thousands of them, and the combinatorics of attitude × orbit × duty-cycle × device-power make the full design space effectively unreachable with the simulator alone.
 
@@ -47,7 +35,13 @@ The approach follows Tanaka & Nagai's POD-PIML methodology (_International Journ
 
 ---
 
-## Results snapshot
+## Results
+
+<p align="center">
+  <img src="figures/median_run_detailed.png" width="780" alt="Predicted vs. SINDA temperatures across all 264 nodes for the median-difficulty held-out test run, with per-node error residuals in the lower panel.">
+</p>
+
+_A representative median-difficulty test case from the 500-run held-out set. Top: predicted (dashed) vs. SINDA ground truth (solid) for all 264 nodes. Bottom: per-node error, bounded within ±2 K for the majority of nodes._
 
 Held-out test set: **500 steady-state runs × 264 nodes = 132 000 predictions**.
 
@@ -91,24 +85,9 @@ satellite-thermal-ml/
 └── README.md             You are here
 ```
 
-The private repo's internal layout:
-
-```
-├── pipeline/             01_process_data → 02_train_model → 03_evaluate_model
-├── src/
-│   ├── config.py         Node / device constants, mapping matrices
-│   ├── data/             QMAP parsing, C/R conductance matrices, Q/T matrix builders
-│   ├── models/           SpacecraftThermNet + physics_loss
-│   └── visualization/    Plotting utilities
-├── notebooks/            01_Data_Exploration, 02_PINN_Prototyping, 03_Model_Evaluation
-├── models/               Saved weights + SVD tensors (U_40, S_40, T_mean, normalization)
-├── reports/figures/      Publication figures
-└── simulation_models/    Thermal Desktop / SINDA inputs (immutable)
-```
-
 ---
 
-## Method in 60 seconds
+## Methodology
 
 1. **Generate data.** A C# driver sweeps Thermal Desktop across spacecraft operating points, producing 250 steady-state SINDA solutions for the "prior" dataset and 500 independent runs for the held-out test set.
 2. **Compress.** SVD on the 264 × 250 training temperature matrix; keep the top 40 modes (>99.9% variance).
@@ -130,18 +109,8 @@ Full technical writeup: **[methodology/README.md](methodology/README.md)**.
 
 ---
 
-## Inspiration
-
-> Tanaka, H. & Nagai, H. (2023). _Thermal surrogate model for spacecraft systems using physics-informed machine learning with POD data reduction._ **International Journal of Heat and Mass Transfer**, 213, 124336. [DOI: 10.1016/j.ijheatmasstransfer.2023.124336](https://doi.org/10.1016/j.ijheatmasstransfer.2023.124336)
-
-Their POD-PIML formulation — predicting POD mode coefficients with a physics-informed loss — is the methodological foundation. This project extends it with (i) a blended supervised + physics loss and (ii) a device-level input interface designed for real operational use. See the [methodology README](methodology/README.md) for a side-by-side comparison.
-
----
-
 ## Contact
 
 **Martin Nguyen**
-Aerospace Engineering · Physics minor · San José State University · Class of 2028
+Aerospace Engineering · San José State University
 [github.com/martinng06/SatelliteML](https://github.com/martinng06/SatelliteML) · [linkedin.com/in/martinnguyen0](https://www.linkedin.com/in/martinnguyen0/) · marngu06@gmail.com
-
-Open to internships and research opportunities in aerospace thermal analysis, spacecraft systems engineering, and applied ML.
